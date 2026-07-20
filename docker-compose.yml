@@ -1,0 +1,36 @@
+# Backend + Postgres only (for EC2 / production)
+# Usage: docker compose up -d --build
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: mkharavad_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mkharavad
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: mkharavad
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mkharavad -d mkharavad"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    container_name: mkharavad_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./uploads:/app/uploads
+
+volumes:
+  postgres_data:

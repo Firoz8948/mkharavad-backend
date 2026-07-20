@@ -1,0 +1,438 @@
+import os
+import shutil
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.dependencies import get_current_admin
+from app.database import get_db
+from app.models import VideoProduct
+from app.payments import service as payments_service
+from app.shipping import service as shipping_service
+
+from . import service
+from .schemas import (
+    AdminLoginResponse,
+    AdminProfileUpdateRequest,
+    DashboardStats,
+    ProductCreateRequest,
+    ProductUpdateRequest,
+)
+from .schemas import AdminLoginRequest
+
+router = APIRouter()
+
+UPLOAD_DIR = Path("uploads/products")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+VIDEO_UPLOAD_DIR = Path("uploads/videos")
+VIDEO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+ALLOWED_VIDEO_EXT = {".mp4", ".webm", ".mov", ".avi"}
+
+
+@router.post("/login", response_model=AdminLoginResponse)
+async def admin_login(body: AdminLoginRequest, db: AsyncSession = Depends(get_db)):
+    return await service.login(db, body.username, body.password)
+
+
+@router.get("/me")
+async def get_me(
+    admin=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await service.get_admin_by_id(db, int(admin["id"]))
+    if not profile:
+        raise HTTPException(status_code=404, detail="Admin not found")
+    return profile
+
+
+@router.put("/me/profile")
+async def update_me_profile(
+    body: AdminProfileUpdateRequest,
+    admin=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.update_admin_profile(
+        db, int(admin["id"]), body.model_dump(exclude_unset=True)
+    )
+
+
+@router.get("/dashboard/stats", response_model=DashboardStats)
+async def dashboard_stats(
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.dashboard_stats(db)
+
+
+@router.get("/products")
+async def list_products(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    category: str | None = None,
+    search: str | None = None,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_all_products(db, page, limit, category, search)
+
+
+@router.get("/products/{product_id}")
+async def get_product(
+    product_id: int,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    product = await service.get_product_by_id(db, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+
+@router.post("/products", status_code=201)
+async def create_product(
+    body: ProductCreateRequest,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.create_product(db, body.model_dump())
+
+
+@router.put("/products/{product_id}")
+async def update_product(
+    product_id: int,
+    body: ProductUpdateRequest,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await service.update_product(
+        db, product_id, body.model_dump(exclude_unset=True)
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return updated
+
+
+@router.delete("/products/{product_id}")
+async def delete_product(
+    product_id: int,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    deleted = await service.delete_product(db, product_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"message": "Product deleted"}
+
+
+@router.post("/products/{product_id}/images")
+async def upload_images(
+    product_id: int,
+    files: list[UploadFile] = File(...),
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    product = await service.get_product_by_id(db, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    saved_urls = []
+    for file in files:
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in ALLOWED_EXT:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = UPLOAD_DIR / filename
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        saved_urls.append(f"/uploads/products/{filename}")
+
+    return await service.add_product_images(db, product_id, saved_urls)
+
+
+@router.delete("/products/{product_id}/images")
+async def remove_image(
+    product_id: int,
+    image_url: str,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await service.remove_product_image(db, product_id, image_url)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return updated
+
+
+@router.get("/orders")
+async def list_orders(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status: str | None = None,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_all_orders(db, page, limit, status)
+
+
+@router.put("/orders/{order_id}/status")
+async def update_order(
+    order_id: str,
+    body: dict,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await service.update_order_status(db, order_id, body.get("status"))
+    if not updated:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return updated
+
+
+@router.get("/payments")
+async def list_payments(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.get_all_payments(db, page, limit)
+
+
+@router.post("/payments/{payment_id}/refund")
+async def refund_payment(
+    payment_id: str,
+    body: dict | None = None,
+    _=Depends(get_current_admin),
+):
+    """Full or partial Razorpay refund for a payment row."""
+    body = body or {}
+    return await payments_service.refund_payment(
+        payment_id,
+        amount=body.get("amount"),
+        reason=body.get("reason"),
+    )
+
+
+@router.get("/users/")
+async def admin_list_users(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.list_users(db, page, limit)
+
+
+@router.get("/users/{user_id}")
+async def admin_get_user(
+    user_id: int, _=Depends(get_current_admin), db: AsyncSession = Depends(get_db)
+):
+    return await service.get_user(db, user_id)
+
+
+@router.get("/shipping/")
+async def admin_list_shipments(_=Depends(get_current_admin)):
+    return await shipping_service.list_all_shipments()
+
+
+@router.put("/shipping/{shipment_id}")
+async def admin_update_shipment(
+    shipment_id: str, payload: dict, _=Depends(get_current_admin)
+):
+    return await shipping_service.update_shipment_manual(shipment_id, payload)
+
+
+@router.post("/orders/{order_id}/shiprocket")
+async def admin_push_order_shiprocket(
+    order_id: str, _=Depends(get_current_admin)
+):
+    """Manually push / re-sync an order to Shiprocket."""
+    return await shipping_service.push_order_to_shiprocket(
+        order_id, raise_on_error=True
+    )
+
+
+@router.get("/orders/{order_id}/shipment")
+async def admin_get_order_shipment(
+    order_id: str, _=Depends(get_current_admin)
+):
+    shipment = await shipping_service.get_shipment_for_order(order_id)
+    if not shipment:
+        raise HTTPException(status_code=404, detail="Shipment not found")
+    return shipment
+
+
+@router.post("/products/add")
+async def admin_add_product_legacy(
+    body: ProductCreateRequest,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    return await service.create_product(db, body.model_dump())
+
+
+@router.post("/products/upload-image")
+async def admin_upload_image_legacy(
+    file: UploadFile = File(...), _=Depends(get_current_admin)
+):
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+    filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = UPLOAD_DIR / filename
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return {"url": f"/uploads/products/{filename}"}
+
+
+# ── Video Products ──────────────────────────────────────────────────────────
+
+@router.get("/video-products")
+async def list_video_products(
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+    result = await db.execute(select(VideoProduct).order_by(VideoProduct.position))
+    items = result.scalars().all()
+    return [_vp_to_dict(vp) for vp in items]
+
+
+@router.post("/video-products", status_code=201)
+async def create_video_product(
+    name: str = Form(...),
+    price: float = Form(...),
+    mrp: float = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    stock: int = Form(0),
+    unit: str = Form("piece"),
+    position: int = Form(0),
+    is_active: bool = Form(True),
+    product_id: int = Form(None),
+    video: UploadFile = File(None),
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    video_url = None
+    if video and video.filename:
+        ext = os.path.splitext(video.filename)[1].lower()
+        if ext not in ALLOWED_VIDEO_EXT:
+            raise HTTPException(status_code=400, detail="Unsupported video type")
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = VIDEO_UPLOAD_DIR / filename
+        with open(filepath, "wb") as f:
+            shutil.copyfileobj(video.file, f)
+        video_url = f"/uploads/videos/{filename}"
+
+    vp = VideoProduct(
+        name=name,
+        description=description,
+        price=price,
+        mrp=mrp,
+        category=category,
+        stock=stock,
+        unit=unit,
+        position=position,
+        is_active=is_active,
+        product_id=product_id,
+        video_url=video_url,
+    )
+    db.add(vp)
+    await db.commit()
+    await db.refresh(vp)
+    return _vp_to_dict(vp)
+
+
+@router.put("/video-products/{vp_id}")
+async def update_video_product(
+    vp_id: int,
+    name: str = Form(None),
+    price: float = Form(None),
+    mrp: float = Form(None),
+    category: str = Form(None),
+    description: str = Form(None),
+    stock: int = Form(None),
+    unit: str = Form(None),
+    position: int = Form(None),
+    is_active: bool = Form(None),
+    product_id: int = Form(None),
+    video: UploadFile = File(None),
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+    result = await db.execute(select(VideoProduct).where(VideoProduct.id == vp_id))
+    vp = result.scalar_one_or_none()
+    if not vp:
+        raise HTTPException(status_code=404, detail="Video product not found")
+
+    if name is not None:
+        vp.name = name
+    if price is not None:
+        vp.price = price
+    if mrp is not None:
+        vp.mrp = mrp
+    if category is not None:
+        vp.category = category
+    if description is not None:
+        vp.description = description
+    if stock is not None:
+        vp.stock = stock
+    if unit is not None:
+        vp.unit = unit
+    if position is not None:
+        vp.position = position
+    if is_active is not None:
+        vp.is_active = is_active
+    if product_id is not None:
+        vp.product_id = product_id
+
+    if video and video.filename:
+        ext = os.path.splitext(video.filename)[1].lower()
+        if ext not in ALLOWED_VIDEO_EXT:
+            raise HTTPException(status_code=400, detail="Unsupported video type")
+        filename = f"{uuid.uuid4().hex}{ext}"
+        filepath = VIDEO_UPLOAD_DIR / filename
+        with open(filepath, "wb") as f:
+            shutil.copyfileobj(video.file, f)
+        vp.video_url = f"/uploads/videos/{filename}"
+
+    await db.commit()
+    await db.refresh(vp)
+    return _vp_to_dict(vp)
+
+
+@router.delete("/video-products/{vp_id}")
+async def delete_video_product(
+    vp_id: int,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select
+    result = await db.execute(select(VideoProduct).where(VideoProduct.id == vp_id))
+    vp = result.scalar_one_or_none()
+    if not vp:
+        raise HTTPException(status_code=404, detail="Video product not found")
+    await db.delete(vp)
+    await db.commit()
+    return {"message": "Deleted"}
+
+
+def _vp_to_dict(vp: VideoProduct) -> dict:
+    return {
+        "id": vp.id,
+        "name": vp.name,
+        "description": vp.description,
+        "price": vp.price,
+        "mrp": vp.mrp,
+        "category": vp.category,
+        "stock": vp.stock,
+        "unit": vp.unit,
+        "video_url": vp.video_url,
+        "is_active": vp.is_active,
+        "position": vp.position,
+        "product_id": vp.product_id,
+        "created_at": vp.created_at.isoformat() if vp.created_at else None,
+    }
