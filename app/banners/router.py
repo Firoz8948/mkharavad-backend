@@ -1,7 +1,3 @@
-import shutil
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,12 +5,9 @@ from app.auth.dependencies import get_current_admin
 from app.banners import service
 from app.banners.schemas import BannerCreateRequest, BannerUpdateRequest
 from app.database import get_db
+from app.storage.bunny import upload_file
 
 router = APIRouter()
-
-UPLOAD_DIR = Path("uploads/banners")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 
 @router.get("/")
@@ -76,14 +69,7 @@ async def upload_banner_image(
     admin=Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    ext = Path(file.filename or "").suffix.lower()
-    if ext not in ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail="Invalid image type")
-    filename = f"{uuid.uuid4().hex}{ext}"
-    filepath = UPLOAD_DIR / filename
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    url = f"/uploads/banners/{filename}"
+    url = await upload_file(file, "banners")
     updated = await service.set_banner_image(db, banner_id, url)
     if not updated:
         raise HTTPException(status_code=404, detail="Banner not found")

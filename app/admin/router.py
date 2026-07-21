@@ -1,8 +1,3 @@
-import os
-import shutil
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +6,7 @@ from app.database import get_db
 from app.models import VideoProduct
 from app.payments import service as payments_service
 from app.shipping import service as shipping_service
+from app.storage.bunny import ALLOWED_IMAGE_EXT, ALLOWED_VIDEO_EXT, upload_file
 
 from . import service
 from .schemas import (
@@ -24,12 +20,8 @@ from .schemas import AdminLoginRequest
 
 router = APIRouter()
 
-UPLOAD_DIR = Path("uploads/products")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-VIDEO_UPLOAD_DIR = Path("uploads/videos")
-VIDEO_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-ALLOWED_VIDEO_EXT = {".mp4", ".webm", ".mov", ".avi"}
+ALLOWED_EXT = ALLOWED_IMAGE_EXT
+ALLOWED_VIDEO_EXT = ALLOWED_VIDEO_EXT
 
 
 @router.post("/login", response_model=AdminLoginResponse)
@@ -140,14 +132,7 @@ async def upload_images(
 
     saved_urls = []
     for file in files:
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in ALLOWED_EXT:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = UPLOAD_DIR / filename
-        with open(filepath, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        saved_urls.append(f"/uploads/products/{filename}")
+        saved_urls.append(await upload_file(file, "products"))
 
     return await service.add_product_images(db, product_id, saved_urls)
 
@@ -276,14 +261,8 @@ async def admin_add_product_legacy(
 async def admin_upload_image_legacy(
     file: UploadFile = File(...), _=Depends(get_current_admin)
 ):
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED_EXT:
-        raise HTTPException(status_code=400, detail="Unsupported file type")
-    filename = f"{uuid.uuid4().hex}{ext}"
-    filepath = UPLOAD_DIR / filename
-    with open(filepath, "wb") as f:
-        f.write(await file.read())
-    return {"url": f"/uploads/products/{filename}"}
+    url = await upload_file(file, "products")
+    return {"url": url}
 
 
 # ── Video Products ──────────────────────────────────────────────────────────
@@ -317,14 +296,9 @@ async def create_video_product(
 ):
     video_url = None
     if video and video.filename:
-        ext = os.path.splitext(video.filename)[1].lower()
-        if ext not in ALLOWED_VIDEO_EXT:
-            raise HTTPException(status_code=400, detail="Unsupported video type")
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = VIDEO_UPLOAD_DIR / filename
-        with open(filepath, "wb") as f:
-            shutil.copyfileobj(video.file, f)
-        video_url = f"/uploads/videos/{filename}"
+        video_url = await upload_file(
+            video, "videos", allowed_ext=ALLOWED_VIDEO_EXT, default_ext=".mp4"
+        )
 
     vp = VideoProduct(
         name=name,
@@ -390,14 +364,9 @@ async def update_video_product(
         vp.product_id = product_id
 
     if video and video.filename:
-        ext = os.path.splitext(video.filename)[1].lower()
-        if ext not in ALLOWED_VIDEO_EXT:
-            raise HTTPException(status_code=400, detail="Unsupported video type")
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = VIDEO_UPLOAD_DIR / filename
-        with open(filepath, "wb") as f:
-            shutil.copyfileobj(video.file, f)
-        vp.video_url = f"/uploads/videos/{filename}"
+        vp.video_url = await upload_file(
+            video, "videos", allowed_ext=ALLOWED_VIDEO_EXT, default_ext=".mp4"
+        )
 
     await db.commit()
     await db.refresh(vp)

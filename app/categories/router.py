@@ -1,8 +1,3 @@
-import os
-import shutil
-import uuid
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,13 +10,9 @@ from app.categories.schemas import (
     SubCategoryUpdateRequest,
 )
 from app.database import get_db
+from app.storage.bunny import upload_file
 
 router = APIRouter()
-
-UPLOAD_DIR = Path("uploads/categories")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-SUB_UPLOAD_DIR = Path("uploads/subcategories")
-SUB_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/")
@@ -132,13 +123,7 @@ async def upload_subcategory_image(
     if not sub:
         raise HTTPException(status_code=404, detail="Subcategory not found")
 
-    ext = os.path.splitext(file.filename or "")[1] or ".jpg"
-    filename = f"{uuid.uuid4()}{ext}"
-    filepath = SUB_UPLOAD_DIR / filename
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    image_url = f"/uploads/subcategories/{filename}"
+    image_url = await upload_file(file, "subcategories")
     return await service.set_subcategory_image(db, subcategory_id, image_url)
 
 
@@ -210,11 +195,5 @@ async def upload_category_image(
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
 
-    ext = os.path.splitext(file.filename or "")[1] or ".jpg"
-    filename = f"{uuid.uuid4()}{ext}"
-    filepath = UPLOAD_DIR / filename
-    with open(filepath, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    image_url = f"/uploads/categories/{filename}"
+    image_url = await upload_file(file, "categories")
     return await service.set_category_image(db, category_id, image_url)

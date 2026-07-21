@@ -1,6 +1,9 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -55,8 +58,16 @@ class Settings(BaseSettings):
     SHIPROCKET_DEFAULT_BREADTH: float = 10
     SHIPROCKET_DEFAULT_HEIGHT: float = 10
 
+    # BunnyCDN Storage (replaces local uploads / S3)
+    BUNNY_STORAGE_ZONE: str = "mkharavad-media"
+    BUNNY_STORAGE_API_KEY: str = ""
+    BUNNY_STORAGE_REGION: str = "sg"
+    BUNNY_CDN_URL: str = "https://mkharavad-media.b-cdn.net"
+
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     @property
