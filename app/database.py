@@ -286,6 +286,8 @@ async def disconnect_db():
 
 async def _backfill_product_subcategories():
     """Ensure product_subcategories has a row for every products.subcategory_id."""
+    from sqlalchemy import text
+
     async with engine.begin() as conn:
         await conn.execute(
             text(
