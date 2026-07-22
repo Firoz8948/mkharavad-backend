@@ -507,6 +507,8 @@ async def set_product_subcategories(
     db: AsyncSession, product: Product, subcategory_ids: list[int] | None
 ) -> None:
     """Replace product↔subcategory links. First id is treated as primary."""
+    from sqlalchemy import delete
+
     from app.models import ProductSubcategory
 
     ids: list[int] = []
@@ -521,7 +523,10 @@ async def set_product_subcategories(
         seen.add(sid)
         ids.append(sid)
 
-    product.subcategory_links.clear()
+    # Explicit delete avoids lazy-loading subcategory_links (MissingGreenlet in async)
+    await db.execute(
+        delete(ProductSubcategory).where(ProductSubcategory.product_id == product.id)
+    )
     await db.flush()
 
     if not ids:
@@ -530,9 +535,7 @@ async def set_product_subcategories(
         return
 
     for sid in ids:
-        product.subcategory_links.append(
-            ProductSubcategory(product_id=product.id, subcategory_id=sid)
-        )
+        db.add(ProductSubcategory(product_id=product.id, subcategory_id=sid))
 
     cat_fields = await resolve_product_category_fields(db, ids[0])
     if cat_fields:

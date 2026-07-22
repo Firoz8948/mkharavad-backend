@@ -183,6 +183,8 @@ async def get_all_products(
         selectinload(Product.images),
         selectinload(Product.variants).selectinload(ProductVariant.options),
         selectinload(Product.subcategory_links),
+        selectinload(Product.category_rel),
+        selectinload(Product.subcategory_rel),
     )
     count_query = select(func.count(Product.id))
 
@@ -209,6 +211,8 @@ async def get_product_by_id(db: AsyncSession, product_id: int) -> dict | None:
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
             selectinload(Product.subcategory_links),
+            selectinload(Product.category_rel),
+            selectinload(Product.subcategory_rel),
         )
         .where(Product.id == product_id)
     )
@@ -267,6 +271,8 @@ async def update_product(db: AsyncSession, product_id: int, data: dict) -> dict 
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
             selectinload(Product.subcategory_links),
+            selectinload(Product.category_rel),
+            selectinload(Product.subcategory_rel),
         )
         .where(Product.id == product_id)
     )

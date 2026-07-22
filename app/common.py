@@ -8,12 +8,20 @@ def utcnow() -> datetime:
 
 
 def serialize_product(product, include_relations=True) -> dict:
+    def _loaded(name: str):
+        """Return relationship only if already eagerly loaded (async-safe)."""
+        try:
+            state = sa_inspect(product)
+            if name in state.unloaded:
+                return None
+            return getattr(product, name)
+        except Exception:
+            return None
+
     subcategory_ids = []
-    try:
-        links = getattr(product, "subcategory_links", None) or []
+    links = _loaded("subcategory_links")
+    if links:
         subcategory_ids = [link.subcategory_id for link in links]
-    except Exception:
-        subcategory_ids = []
     if not subcategory_ids and getattr(product, "subcategory_id", None):
         subcategory_ids = [product.subcategory_id]
 
@@ -40,20 +48,16 @@ def serialize_product(product, include_relations=True) -> dict:
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
-    try:
-        cat_rel = getattr(product, "category_rel", None)
-        if cat_rel is not None:
-            data["category_slug"] = getattr(cat_rel, "slug", None)
-    except Exception:
-        pass
-    try:
-        sub_rel = getattr(product, "subcategory_rel", None)
-        if sub_rel is not None:
-            data["subcategory_slug"] = getattr(sub_rel, "slug", None)
-    except Exception:
-        pass
+    cat_rel = _loaded("category_rel")
+    if cat_rel is not None:
+        data["category_slug"] = getattr(cat_rel, "slug", None)
+    sub_rel = _loaded("subcategory_rel")
+    if sub_rel is not None:
+        data["subcategory_slug"] = getattr(sub_rel, "slug", None)
     if include_relations:
-        data["images"] = [img.url for img in (product.images or [])]
+        images = _loaded("images")
+        data["images"] = [img.url for img in (images or [])]
+        variants = _loaded("variants")
         data["variants"] = [
             {
                 "id": v.id,
@@ -70,7 +74,7 @@ def serialize_product(product, include_relations=True) -> dict:
                     for o in (v.options or [])
                 ],
             }
-            for v in (product.variants or [])
+            for v in (variants or [])
         ]
     return data
 
