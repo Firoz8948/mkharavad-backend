@@ -217,18 +217,29 @@ async def quote_shipping(
 
     zone = await find_zone_for_state(db, resolved_state)
     if zone:
-        base_rate = zone_base_rate(zone, method)
-        charge = calc_zone_shipping(
+        prepaid_base = zone_base_rate(zone, "prepaid")
+        cod_base = zone_base_rate(zone, "cod")
+        prepaid_charge = calc_zone_shipping(
             subtotal,
-            base_rate,
+            prepaid_base,
             weight_grams,
             zone.free_shipping_threshold,
         )
+        cod_charge = calc_zone_shipping(
+            subtotal,
+            cod_base,
+            weight_grams,
+            zone.free_shipping_threshold,
+        )
+        charge = cod_charge if method == "cod" else prepaid_charge
+        base_rate = cod_base if method == "cod" else prepaid_base
         return {
             "shipping_charge": charge,
             "rate": base_rate,
-            "prepaid_rate": zone_base_rate(zone, "prepaid"),
-            "cod_rate": zone_base_rate(zone, "cod"),
+            "prepaid_rate": prepaid_base,
+            "cod_rate": cod_base,
+            "prepaid_shipping_charge": prepaid_charge,
+            "cod_shipping_charge": cod_charge,
             "payment_method": method,
             "zone_id": zone.id,
             "zone_name": zone.name,
@@ -240,14 +251,16 @@ async def quote_shipping(
             "fallback": False,
         }
 
-    charge = calc_zone_shipping(
+    prepaid_charge = calc_zone_shipping(
         subtotal, FLAT_SHIPPING_CHARGE, weight_grams, FREE_SHIPPING_THRESHOLD
     )
     return {
-        "shipping_charge": charge,
+        "shipping_charge": prepaid_charge,
         "rate": FLAT_SHIPPING_CHARGE,
         "prepaid_rate": FLAT_SHIPPING_CHARGE,
         "cod_rate": FLAT_SHIPPING_CHARGE,
+        "prepaid_shipping_charge": prepaid_charge,
+        "cod_shipping_charge": prepaid_charge,
         "payment_method": method,
         "zone_id": None,
         "zone_name": None,
