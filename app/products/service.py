@@ -170,6 +170,8 @@ async def get_product_by_slug(slug: str) -> dict:
                 selectinload(Product.images),
                 selectinload(Product.variants).selectinload(ProductVariant.options),
                 selectinload(Product.subcategory_links),
+                selectinload(Product.category_rel),
+                selectinload(Product.subcategory_rel),
             )
             .where(Product.slug == slug, Product.is_active == True)  # noqa: E712
         )

@@ -28,6 +28,8 @@ def serialize_product(product, include_relations=True) -> dict:
         "category_id": product.category_id,
         "subcategory_id": getattr(product, "subcategory_id", None),
         "subcategory_ids": subcategory_ids,
+        "category_slug": None,
+        "subcategory_slug": None,
         "stock": product.stock,
         "unit": product.unit,
         "weight": product.weight,
@@ -38,6 +40,18 @@ def serialize_product(product, include_relations=True) -> dict:
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
+    try:
+        cat_rel = getattr(product, "category_rel", None)
+        if cat_rel is not None:
+            data["category_slug"] = getattr(cat_rel, "slug", None)
+    except Exception:
+        pass
+    try:
+        sub_rel = getattr(product, "subcategory_rel", None)
+        if sub_rel is not None:
+            data["subcategory_slug"] = getattr(sub_rel, "slug", None)
+    except Exception:
+        pass
     if include_relations:
         data["images"] = [img.url for img in (product.images or [])]
         data["variants"] = [
