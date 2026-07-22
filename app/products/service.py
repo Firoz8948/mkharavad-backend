@@ -118,7 +118,8 @@ async def list_products(
                 count_query = count_query.where(filt)
             else:
                 query = query.where(Product.id == -1)
-                count_query = count_query.where(Product.id == -1)        elif category:
+                count_query = count_query.where(Product.id == -1)
+        elif category:
             query = query.where(Product.category.ilike(f"%{category}%"))
             count_query = count_query.where(Product.category.ilike(f"%{category}%"))
 
