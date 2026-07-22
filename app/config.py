@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
     FRONTEND_URL: str = "http://localhost:3000"
+    # Comma-separated extra origins (e.g. Vercel preview + custom domain)
+    CORS_ORIGINS: str = ""
 
     DATABASE_URL: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/mkharavad"
@@ -79,6 +81,11 @@ class Settings(BaseSettings):
             "http://localhost:3001",
             "http://127.0.0.1:3001",
         }
+        if self.CORS_ORIGINS:
+            for origin in self.CORS_ORIGINS.split(","):
+                origin = origin.strip()
+                if origin:
+                    origins.add(origin)
         return [origin for origin in origins if origin]
 
 
