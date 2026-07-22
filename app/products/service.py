@@ -62,6 +62,7 @@ async def list_products(
         query = select(Product).options(
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
+            selectinload(Product.subcategory_links),
         )
         count_query = select(func.count(Product.id))
 
@@ -75,8 +76,15 @@ async def list_products(
             )
             sub = sub_result.scalar_one_or_none()
             if sub:
-                query = query.where(Product.subcategory_id == sub.id)
-                count_query = count_query.where(Product.subcategory_id == sub.id)
+                from app.models import ProductSubcategory
+
+                filt = Product.id.in_(
+                    select(ProductSubcategory.product_id).where(
+                        ProductSubcategory.subcategory_id == sub.id
+                    )
+                )
+                query = query.where(filt)
+                count_query = count_query.where(filt)
             else:
                 query = query.where(Product.id == -1)
                 count_query = count_query.where(Product.id == -1)
@@ -86,7 +94,8 @@ async def list_products(
             )
             cat = cat_result.scalar_one_or_none()
             if cat:
-                # All products in this category OR in any of its subcategories
+                from app.models import ProductSubcategory
+
                 sub_ids = (
                     await db.execute(
                         select(SubCategory.id).where(
@@ -97,7 +106,11 @@ async def list_products(
                 if sub_ids:
                     filt = or_(
                         Product.category_id == cat.id,
-                        Product.subcategory_id.in_(sub_ids),
+                        Product.id.in_(
+                            select(ProductSubcategory.product_id).where(
+                                ProductSubcategory.subcategory_id.in_(sub_ids)
+                            )
+                        ),
                     )
                 else:
                     filt = Product.category_id == cat.id
@@ -105,8 +118,7 @@ async def list_products(
                 count_query = count_query.where(filt)
             else:
                 query = query.where(Product.id == -1)
-                count_query = count_query.where(Product.id == -1)
-        elif category:
+                count_query = count_query.where(Product.id == -1)        elif category:
             query = query.where(Product.category.ilike(f"%{category}%"))
             count_query = count_query.where(Product.category.ilike(f"%{category}%"))
 
@@ -156,6 +168,7 @@ async def get_product_by_slug(slug: str) -> dict:
             .options(
                 selectinload(Product.images),
                 selectinload(Product.variants).selectinload(ProductVariant.options),
+                selectinload(Product.subcategory_links),
             )
             .where(Product.slug == slug, Product.is_active == True)  # noqa: E712
         )
@@ -172,6 +185,7 @@ async def get_product_by_id(product_id: int | str) -> dict:
             .options(
                 selectinload(Product.images),
                 selectinload(Product.variants).selectinload(ProductVariant.options),
+                selectinload(Product.subcategory_links),
             )
             .where(Product.id == int(product_id))
         )
@@ -188,6 +202,7 @@ async def update_product(product_id: int | str, updates: dict) -> dict:
             .options(
                 selectinload(Product.images),
                 selectinload(Product.variants).selectinload(ProductVariant.options),
+                selectinload(Product.subcategory_links),
             )
             .where(Product.id == int(product_id))
         )

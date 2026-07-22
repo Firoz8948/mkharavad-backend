@@ -76,9 +76,11 @@ def serialize_category(
 
 
 async def _product_counts_by_subcategory(db: AsyncSession) -> dict[int, int]:
+    from app.models import ProductSubcategory
+
     rows = await db.execute(
-        select(Product.subcategory_id, func.count(Product.id)).group_by(
-            Product.subcategory_id
+        select(ProductSubcategory.subcategory_id, func.count()).group_by(
+            ProductSubcategory.subcategory_id
         )
     )
     return {row[0]: row[1] for row in rows.all() if row[0] is not None}
@@ -313,18 +315,31 @@ async def _map_products_to_subcategory(
     category: Category | None,
     product_ids: list[int],
 ) -> None:
-    label = (
-        f"{category.name} / {sub.name}" if category else sub.name
-    )
-    await db.execute(
-        update(Product)
-        .where(Product.id.in_(product_ids))
-        .values(
-            subcategory_id=sub.id,
-            category_id=sub.category_id,
-            category=label[:100],
+    """Attach products to this subcategory (keeps other subcategory links)."""
+    from app.models import ProductSubcategory
+
+    if not product_ids:
+        return
+    ids = [int(pid) for pid in product_ids]
+    products = (
+        await db.execute(
+            select(Product)
+            .options(selectinload(Product.subcategory_links))
+            .where(Product.id.in_(ids))
         )
-    )
+    ).scalars().all()
+    parent_name = category.name if category else ""
+    for p in products:
+        existing = {link.subcategory_id for link in p.subcategory_links}
+        if sub.id not in existing:
+            p.subcategory_links.append(
+                ProductSubcategory(product_id=p.id, subcategory_id=sub.id)
+            )
+        if not p.subcategory_id:
+            p.subcategory_id = sub.id
+            p.category_id = sub.category_id
+            p.category = (parent_name or sub.name)[:100]
+    await db.flush()
 
 
 async def delete_subcategory(db: AsyncSession, subcategory_id: int) -> bool:
@@ -408,21 +423,23 @@ async def get_subcategory_products(
     page: int = 1,
     limit: int = 20,
 ) -> dict:
-    total = (
-        await db.execute(
-            select(func.count(Product.id)).where(
-                Product.subcategory_id == subcategory_id
-            )
+    from app.models import ProductSubcategory
+
+    filt = Product.id.in_(
+        select(ProductSubcategory.product_id).where(
+            ProductSubcategory.subcategory_id == subcategory_id
         )
-    ).scalar() or 0
+    )
+    total = (await db.execute(select(func.count(Product.id)).where(filt))).scalar() or 0
 
     result = await db.execute(
         select(Product)
         .options(
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
+            selectinload(Product.subcategory_links),
         )
-        .where(Product.subcategory_id == subcategory_id)
+        .where(filt)
         .order_by(Product.created_at.desc())
         .offset((page - 1) * limit)
         .limit(limit)
@@ -477,9 +494,49 @@ async def resolve_product_category_fields(
     if not sub:
         return {}
     parent_name = sub.category.name if sub.category else ""
-    label = f"{parent_name} / {sub.name}" if parent_name else sub.name
+    # Store parent category name for cards; keep primary subcategory_id separately
+    label = parent_name or sub.name
     return {
         "subcategory_id": sub.id,
         "category_id": sub.category_id,
         "category": label[:100],
     }
+
+
+async def set_product_subcategories(
+    db: AsyncSession, product: Product, subcategory_ids: list[int] | None
+) -> None:
+    """Replace product↔subcategory links. First id is treated as primary."""
+    from app.models import ProductSubcategory
+
+    ids: list[int] = []
+    seen: set[int] = set()
+    for raw in subcategory_ids or []:
+        try:
+            sid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if sid in seen:
+            continue
+        seen.add(sid)
+        ids.append(sid)
+
+    product.subcategory_links.clear()
+    await db.flush()
+
+    if not ids:
+        product.subcategory_id = None
+        product.category_id = None
+        return
+
+    for sid in ids:
+        product.subcategory_links.append(
+            ProductSubcategory(product_id=product.id, subcategory_id=sid)
+        )
+
+    cat_fields = await resolve_product_category_fields(db, ids[0])
+    if cat_fields:
+        product.subcategory_id = cat_fields["subcategory_id"]
+        product.category_id = cat_fields["category_id"]
+        product.category = cat_fields["category"]
+

@@ -188,6 +188,11 @@ class Product(Base):
     subcategory_rel: Mapped[Optional["SubCategory"]] = relationship(
         "SubCategory", back_populates="products", foreign_keys=[subcategory_id]
     )
+    subcategory_links: Mapped[list["ProductSubcategory"]] = relationship(
+        "ProductSubcategory",
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
     images: Mapped[list["ProductImage"]] = relationship(
         "ProductImage",
         back_populates="product",
@@ -199,6 +204,26 @@ class Product(Base):
         back_populates="product",
         cascade="all, delete-orphan",
     )
+
+
+class ProductSubcategory(Base):
+    """Many-to-many: one product can belong to multiple subcategories."""
+
+    __tablename__ = "product_subcategories"
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), primary_key=True
+    )
+    subcategory_id: Mapped[int] = mapped_column(
+        ForeignKey("subcategories.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )
+
+    product: Mapped["Product"] = relationship(
+        "Product", back_populates="subcategory_links"
+    )
+    subcategory: Mapped["SubCategory"] = relationship("SubCategory")
 
 
 class ProductImage(Base):

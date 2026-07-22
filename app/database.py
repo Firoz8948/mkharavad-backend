@@ -48,6 +48,7 @@ async def connect_db():
         Payment,
         Product,
         ProductImage,
+        ProductSubcategory,
         ProductVariant,
         ProductVariantOption,
         PromoCode,
@@ -242,14 +243,60 @@ async def connect_db():
             )
         )
 
+        # Many-to-many product ↔ subcategory
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS product_subcategories (
+                    product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                    subcategory_id INTEGER NOT NULL REFERENCES subcategories(id) ON DELETE CASCADE,
+                    PRIMARY KEY (product_id, subcategory_id)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_product_subcategories_subcategory_id "
+                "ON product_subcategories(subcategory_id)"
+            )
+        )
+        # Backfill from legacy products.subcategory_id
+        await conn.execute(
+            text(
+                """
+                INSERT INTO product_subcategories (product_id, subcategory_id)
+                SELECT id, subcategory_id FROM products
+                WHERE subcategory_id IS NOT NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+
     await seed_admin()
     await _migrate_products_to_subcategories()
+    await _backfill_product_subcategories()
     print("PostgreSQL connected and tables ready")
 
 
 async def disconnect_db():
     await engine.dispose()
     print("PostgreSQL disconnected")
+
+
+async def _backfill_product_subcategories():
+    """Ensure product_subcategories has a row for every products.subcategory_id."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                INSERT INTO product_subcategories (product_id, subcategory_id)
+                SELECT id, subcategory_id FROM products
+                WHERE subcategory_id IS NOT NULL
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
 
 
 async def _migrate_products_to_subcategories():

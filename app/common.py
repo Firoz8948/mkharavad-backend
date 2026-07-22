@@ -8,6 +8,15 @@ def utcnow() -> datetime:
 
 
 def serialize_product(product, include_relations=True) -> dict:
+    subcategory_ids = []
+    try:
+        links = getattr(product, "subcategory_links", None) or []
+        subcategory_ids = [link.subcategory_id for link in links]
+    except Exception:
+        subcategory_ids = []
+    if not subcategory_ids and getattr(product, "subcategory_id", None):
+        subcategory_ids = [product.subcategory_id]
+
     data = {
         "id": str(product.id),
         "name": product.name,
@@ -18,6 +27,7 @@ def serialize_product(product, include_relations=True) -> dict:
         "category": product.category,
         "category_id": product.category_id,
         "subcategory_id": getattr(product, "subcategory_id", None),
+        "subcategory_ids": subcategory_ids,
         "stock": product.stock,
         "unit": product.unit,
         "weight": product.weight,

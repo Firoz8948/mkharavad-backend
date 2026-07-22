@@ -36,7 +36,8 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 async def login(db: AsyncSession, username: str, password: str) -> dict:
-    if username == settings.ADMIN_USERNAME:
+    username = (username or "").strip()
+    if username == settings.ADMIN_USERNAME or username == settings.ADMIN_EMAIL:
         lookup_email = settings.ADMIN_EMAIL
     elif "@" in username:
         lookup_email = username
@@ -181,6 +182,7 @@ async def get_all_products(
     query = select(Product).options(
         selectinload(Product.images),
         selectinload(Product.variants).selectinload(ProductVariant.options),
+        selectinload(Product.subcategory_links),
     )
     count_query = select(func.count(Product.id))
 
@@ -206,6 +208,7 @@ async def get_product_by_id(db: AsyncSession, product_id: int) -> dict | None:
         .options(
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
+            selectinload(Product.subcategory_links),
         )
         .where(Product.id == product_id)
     )
@@ -217,10 +220,15 @@ async def create_product(db: AsyncSession, data: dict) -> dict:
     from app.categories import service as category_service
 
     variants_data = data.pop("variants", []) or []
+    subcategory_ids = data.pop("subcategory_ids", None)
     subcategory_id = data.pop("subcategory_id", None)
-    cat_fields = await category_service.resolve_product_category_fields(
-        db, subcategory_id
-    )
+    if subcategory_ids is None and subcategory_id is not None:
+        subcategory_ids = [subcategory_id]
+    subcategory_ids = subcategory_ids or []
+
+    # Temporary category fields from primary subcategory; links set after flush
+    primary = subcategory_ids[0] if subcategory_ids else None
+    cat_fields = await category_service.resolve_product_category_fields(db, primary)
     if cat_fields:
         data.update(cat_fields)
     elif not data.get("category"):
@@ -236,6 +244,8 @@ async def create_product(db: AsyncSession, data: dict) -> dict:
     product = Product(slug=slug, **data)
     db.add(product)
     await db.flush()
+
+    await category_service.set_product_subcategories(db, product, subcategory_ids)
 
     for var_data in variants_data:
         variant = ProductVariant(product_id=product.id, name=var_data["name"])
@@ -256,6 +266,7 @@ async def update_product(db: AsyncSession, product_id: int, data: dict) -> dict 
         .options(
             selectinload(Product.images),
             selectinload(Product.variants).selectinload(ProductVariant.options),
+            selectinload(Product.subcategory_links),
         )
         .where(Product.id == product_id)
     )
@@ -264,22 +275,21 @@ async def update_product(db: AsyncSession, product_id: int, data: dict) -> dict 
         return None
 
     variants_data = data.pop("variants", None)
-    if "subcategory_id" in data:
-        subcategory_id = data.pop("subcategory_id")
-        cat_fields = await category_service.resolve_product_category_fields(
-            db, subcategory_id
-        )
-        if cat_fields:
-            data.update(cat_fields)
-        else:
-            data["subcategory_id"] = None
-            data["category_id"] = None
+    subcategory_ids = data.pop("subcategory_ids", None)
+    if "subcategory_id" in data and subcategory_ids is None:
+        sid = data.pop("subcategory_id")
+        subcategory_ids = [sid] if sid is not None else []
 
     for key, value in data.items():
         if hasattr(product, key) and value is not None:
             setattr(product, key, value)
     if "name" in data and data["name"]:
         product.slug = slugify(data["name"])
+
+    if subcategory_ids is not None:
+        await category_service.set_product_subcategories(
+            db, product, subcategory_ids
+        )
 
     if variants_data is not None:
         for v in list(product.variants):

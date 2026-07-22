@@ -48,6 +48,7 @@ class ProductCreateRequest(BaseModel):
     mrp: float
     category: str = ""
     subcategory_id: Optional[int] = None
+    subcategory_ids: Optional[list[int]] = None
     stock: int = 0
     unit: Optional[str] = "grams"
     weight: Optional[float] = None
@@ -65,6 +66,7 @@ class ProductUpdateRequest(BaseModel):
     mrp: Optional[float] = None
     category: Optional[str] = None
     subcategory_id: Optional[int] = None
+    subcategory_ids: Optional[list[int]] = None
     stock: Optional[int] = None
     unit: Optional[str] = None
     weight: Optional[float] = None
